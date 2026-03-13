@@ -95,33 +95,35 @@ namespace SomeSimpleConsoleGame
         public void SetData(int startIndex, ReadOnlySpan<char> data)
         {
             if (!CheckRange(startIndex, data.Length)) return;
-            var backSpan = BackBuffer.AsSpan(startIndex, data.Length);
-            if (backSpan.SequenceEqual(data)) return;
-            data.CopyTo(backSpan);
+
+            var oldSpan = BackBuffer.AsSpan(startIndex, data.Length);
+
+            if (oldSpan.SequenceEqual(data)) return;
 
             int startY = startIndex / BufferWidth;
             int startX = startIndex % BufferWidth;
 
-            int endY = (startIndex + data.Length) / BufferWidth;
-            int endX = (startIndex + data.Length) % BufferWidth;
+            int offset = 0;
+            int remaining = data.Length;
 
-            if (startY == endY)
+            int firstChunkLen = Math.Min(BufferWidth - startX, remaining);
+            CheckAndMark(startY, startX, firstChunkLen, oldSpan, data, ref offset, ref remaining);
+
+            int currentRow = startY + 1;
+            while (remaining > BufferWidth)
             {
-                MarkDityLine(startY, startX, data.Length);
-            }
-            else
-            {
-                MarkDityLine(startY, startX, BufferWidth - startX);
-                MarkDityLine(endY, 0, endX);
-                if (startY + 1 == endY) return;
-                for (int i = startY + 1; i < endY; i++)
-                {
-                    MarkDityLine(i, 0, BufferWidth);
-                }
+                CheckAndMark(currentRow, 0, BufferWidth, oldSpan, data, ref offset, ref remaining);
+                currentRow++;
             }
 
-            MarkDityLine(startY, startX, data.Length);
+            if (remaining > 0)
+            {
+                CheckAndMark(currentRow, 0, remaining, oldSpan, data, ref offset, ref remaining);
+            }
+
+            data.CopyTo(oldSpan);
         }
+
         public void SetChar(int x, int y, char c)
         {
             int index = GetBufferIndex(x, y);
@@ -173,6 +175,17 @@ namespace SomeSimpleConsoleGame
             int newEnd = Math.Max(oldEnd, start + length);
 
             line = (newStart, newEnd - newStart);
+        }
+        private void CheckAndMark(int row, int start, int length, Span<char> oldSpan, ReadOnlySpan<char> data, ref int offset, ref int remaining)
+        {
+            var oldSegment = oldSpan.Slice(offset, length);
+            var newSegment = data.Slice(offset, length);
+
+            if (!oldSegment.SequenceEqual(newSegment))
+                MarkDityLine(row, start, length);
+
+            offset += length;
+            remaining -= length;
         }
         private void MarkDirtyAll()
         {

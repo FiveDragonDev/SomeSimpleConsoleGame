@@ -5,7 +5,7 @@ using static OpenTK.Graphics.OpenGL4.GL;
 
 namespace SomeSimpleConsoleGame
 {
-    public sealed class GLContext : IDisposable
+    public sealed class GLContext : IRenderContext, IDisposable
     {
         private readonly int _bufferWidth, _bufferHeight, _bufferArea;
 
@@ -40,6 +40,27 @@ namespace SomeSimpleConsoleGame
             _bufferHeight = height;
             _bufferArea = width * height;
 
+            new Shader(
+@"
+#version 440 core
+layout(location = 0) in vec3 aPosition;
+layout(location = 1) in float aColor;
+out vec3 vCoord;
+out float vColor;
+void main() {
+    gl_Position = vec4(aPosition, 1.0);
+    vColor = aColor;
+    vCoord = aPosition.xyz;
+}",
+@"
+#version 440 core
+in vec3 vCoord;
+in float vColor;
+out float FragColor;
+void main() {
+    FragColor = vColor;
+}").Use();
+
             Viewport(0, 0, width, height);
 
             Enable(EnableCap.DepthTest);
@@ -56,7 +77,7 @@ namespace SomeSimpleConsoleGame
             BindTexture(TextureTarget.Texture2D, _renderTexture);
             TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.R32f,
                              width, height, 0,
-                             PixelFormat.Red, PixelType.UnsignedByte, IntPtr.Zero);
+                             PixelFormat.Red, PixelType.Float, IntPtr.Zero);
             TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
             TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
 
@@ -102,10 +123,21 @@ namespace SomeSimpleConsoleGame
             // INTENSITY
             VertexAttribPointer(1, 1, VertexAttribPointerType.Float, false, stride, offset);
             EnableVertexAttribArray(1);
-            offset += sizeof(byte);
+            offset += sizeof(byte); // later if we want to add more attributes, we can use the remaining byte for a flag or something
             CheckError();
         }
 
+        public void DrawMesh(Mesh mesh)
+        {
+            var primitive = mesh.GetTriangleVertices();
+            var convertedPrimitives = new (float, float, float, float)[primitive.Length];
+            for (int i = 0; i < primitive.Length; i++)
+            {
+                var vertex = primitive[i];
+                convertedPrimitives[i] = (vertex.X, vertex.Y, vertex.Z, 1);
+            }
+            DrawPrimitive(convertedPrimitives);
+        }
         public void DrawPrimitive(ReadOnlySpan<(float, float, float, float)> vertices)
         {
             if (vertices.Length == 0) return;
@@ -121,7 +153,7 @@ namespace SomeSimpleConsoleGame
             }
         }
 
-        public char[] Render()
+        public (int, char[]) Render()
         {
             BindFramebuffer(FramebufferTarget.Framebuffer, _framebuffer);
 
@@ -133,34 +165,33 @@ namespace SomeSimpleConsoleGame
                 int vertexCount = _vertices.Count / 4;
                 int sizeInBytes = _vertices.Count * sizeof(float);
 
-                BufferSubData(BufferTarget.ArrayBuffer, IntPtr.Zero, sizeInBytes, _vertices.ToArray());
+                // BufferSubData(BufferTarget.ArrayBuffer, IntPtr.Zero, sizeInBytes, _vertices.ToArray());
+                BufferData(BufferTarget.ArrayBuffer, sizeInBytes, _vertices.ToArray(), BufferUsageHint.DynamicDraw);
                 CheckError();
-
                 DrawArrays(PrimitiveType.Triangles, 0, vertexCount);
-                CheckError();
             }
 
             Finish();
             CheckError();
 
-            var pixelData = new byte[_bufferArea];
+            var pixelData = new float[_bufferArea];
             ReadBuffer(ReadBufferMode.ColorAttachment0);
-            ReadPixels(0, 0, _bufferWidth, _bufferHeight, PixelFormat.Red, PixelType.UnsignedByte, pixelData);
+            ReadPixels(0, 0, _bufferWidth, _bufferHeight, PixelFormat.Red, PixelType.Float, pixelData);
             CheckError();
 
             ClearColor(0, 0, 0, 0);
             Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
             _vertices.Clear();
 
-            const string chars = " .:+*@#";
+            const string chars = " .:^+$*#";
             Span<char> data = new char[pixelData.Length];
             for (int i = 0; i < pixelData.Length; i++)
             {
-                int index = (int)(pixelData[i] / 255f * (chars.Length - 1));
+                int index = (int)(pixelData[i] * (chars.Length - 1));
                 index = Math.Clamp(index, 0, chars.Length - 1);
                 data[i] = chars[index];
             }
-            return data.ToArray();
+            return (0, data.ToArray());
         }
 
         private static void CheckError()

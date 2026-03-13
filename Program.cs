@@ -11,15 +11,39 @@ namespace SomeSimpleConsoleGame
 
         private static void Main()
         {
-            const int Width = 120, Height = 60;
+            const int width = 120, height = 120;
 
-            Console.SetWindowSize(Width, Height);
-            Console.SetBufferSize(Width, Height);
-            EnableAnsiCodes();
+            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            {
+                Console.SetWindowSize(width, height);
+                Console.SetBufferSize(width, height);
+                EnableAnsiCodes();
+            }
 
             _systems = new();
+            GLContext context = new(width, height);
 
-            _systems.AddSystem(new RenderSystem(Width, Height, 60), 1);
+            Mesh mesh = new([
+                new(-0.5f, -0.5f, -0.5f),
+                new(0.5f, -0.5f, -0.5f),
+                new(0.5f, 0.5f, -0.5f),
+                new(-0.5f, 0.5f, -0.5f),
+                new(-0.5f, -0.5f, 0.5f),
+                new(0.5f, -0.5f, 0.5f),
+                new(0.5f, 0.5f, 0.5f),
+                new(-0.5f, 0.5f, 0.5f)
+                ],
+                [
+                    0, 1, 2, 0, 2, 3,
+                    4, 6, 5, 4, 7, 6,
+                    0, 3, 7, 0, 7, 4,
+                    1, 5, 6, 1, 6, 2,
+                    0, 4, 5, 0, 5, 1,
+                    3, 2, 6, 3, 6, 7,
+                ]);
+
+            _systems.AddSystem(new TestRotateSystem(mesh, context), 2);
+            _systems.AddSystem(new RenderSystem(width, height, 60, context), 1);
 
             while (true)
             {
