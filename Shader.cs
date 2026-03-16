@@ -4,11 +4,9 @@ using static OpenTK.Graphics.OpenGL4.GL;
 
 namespace SomeSimpleConsoleGame
 {
-    public sealed class Shader
+    public sealed class Shader : IDisposable
     {
         public int Handle { get; }
-
-        private int _currentTextureUnit;
 
         public Shader(string vertexShaderSource, string fragmentShaderSource)
         {
@@ -52,32 +50,19 @@ namespace SomeSimpleConsoleGame
             DeleteShader(fragmentShader);
         }
 
-        public void Uniform(string name, in bool value)
-        {
-            Uniform1(GetLocation(name), value ? 1 : 0);
-        }
-        public void Uniform(string name, in float value)
-        {
-            Uniform1(GetLocation(name), value);
-        }
-        public void Uniform(string name, float x, float y)
-        {
-            Uniform2(GetLocation(name), new Vector2(x, y));
-        }
-        public void Uniform(string name, float x, float y, float z)
-        {
-            Uniform3(GetLocation(name), new Vector3(x, y, z));
-        }
+        public void Uniform(string name, in bool value) => Uniform1(GetLocation(name), value ? 1 : 0);
+        public void Uniform(string name, in float value) => Uniform1(GetLocation(name), value);
+        public void Uniform(string name, float x, float y) => Uniform2(GetLocation(name), new Vector2(x, y));
+        public void Uniform(string name, float x, float y, float z) => Uniform3(GetLocation(name), new Vector3(x, y, z));
 
-        public void Use()
-        {
-            UseProgram(Handle);
-        }
-        public void ResetTextureUnits() => _currentTextureUnit = 0;
+        public void Use() => UseProgram(Handle);
 
-        private int GetLocation(string name)
+        private int GetLocation(string name) => GetUniformLocation(Handle, name);
+
+        public void Dispose()
         {
-            return GetUniformLocation(Handle, name);
+            DeleteProgram(Handle);
+            GC.SuppressFinalize(this);
         }
     }
 }

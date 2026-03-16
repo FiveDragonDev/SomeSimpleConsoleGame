@@ -1,6 +1,7 @@
 ﻿using OpenTK.Graphics.OpenGL4;
 using OpenTK.Windowing.Common;
 using OpenTK.Windowing.Desktop;
+using System.Diagnostics;
 using static OpenTK.Graphics.OpenGL4.GL;
 
 namespace SomeSimpleConsoleGame
@@ -10,14 +11,21 @@ namespace SomeSimpleConsoleGame
         private readonly int _bufferWidth, _bufferHeight, _bufferArea;
 
         private readonly NativeWindow _window;
+        private readonly Shader _shader;
 
         private readonly int _vertexArrayObject, _vertexBufferObject, _elementBufferObject, _depthRenderBuffer;
+        private int _vertexBufferCapacityBytes;
 
         private readonly int _framebuffer, _renderTexture;
 
-        private readonly List<float> _vertices = [];
+        private float[] _vertexData;
+        private int _vertexFloatCount;
+        private readonly float[] _pixelData;
+        private readonly char[] _charData;
 
-        public GLContext(int width, int height)
+        private const string Ramp = " .:^+$*#";
+
+        public GLContext(int width, int height, Shader? shader = null)
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
@@ -40,7 +48,11 @@ namespace SomeSimpleConsoleGame
             _bufferHeight = height;
             _bufferArea = width * height;
 
-            new Shader(
+            _vertexData = new float[4096];
+            _pixelData = new float[_bufferArea];
+            _charData = new char[_bufferArea];
+
+            _shader = shader ?? new Shader(
 @"
 #version 440 core
 layout(location = 0) in vec3 aPosition;
@@ -58,8 +70,9 @@ in vec3 vCoord;
 in float vColor;
 out float FragColor;
 void main() {
-    FragColor = vColor;
-}").Use();
+    FragColor = vColor * (vCoord.z + 0.5);
+ }");
+            _shader.Use();
 
             Viewport(0, 0, width, height);
 
@@ -110,7 +123,8 @@ void main() {
             _elementBufferObject = GenBuffer();
             BindBuffer(BufferTarget.ElementArrayBuffer, _elementBufferObject);
 
-            BufferData(BufferTarget.ArrayBuffer, 4 * sizeof(float) * 10 /** Enum.GetValues<PrimitiveType>().Length*/, IntPtr.Zero, BufferUsageHint.DynamicDraw);
+            _vertexBufferCapacityBytes = _vertexData.Length * sizeof(float);
+            BufferData(BufferTarget.ArrayBuffer, _vertexBufferCapacityBytes, IntPtr.Zero, BufferUsageHint.StreamDraw);
 
             int stride = 4 * sizeof(float);
             int offset = 0;
@@ -123,34 +137,40 @@ void main() {
             // INTENSITY
             VertexAttribPointer(1, 1, VertexAttribPointerType.Float, false, stride, offset);
             EnableVertexAttribArray(1);
-            offset += sizeof(byte); // later if we want to add more attributes, we can use the remaining byte for a flag or something
+            offset += sizeof(float);
             CheckError();
         }
 
         public void DrawMesh(Mesh mesh)
         {
             var primitive = mesh.GetTriangleVertices();
-            var convertedPrimitives = new (float, float, float, float)[primitive.Length];
             for (int i = 0; i < primitive.Length; i++)
             {
                 var vertex = primitive[i];
-                convertedPrimitives[i] = (vertex.X, vertex.Y, vertex.Z, 1);
+                DrawPrimitiveVertex(vertex.X, vertex.Y, vertex.Z, 1f);
             }
-            DrawPrimitive(convertedPrimitives);
         }
         public void DrawPrimitive(ReadOnlySpan<(float, float, float, float)> vertices)
         {
             if (vertices.Length == 0) return;
             foreach (var (x, y, z, intensity) in vertices)
             {
-                if (x < -1 || x > 1 || y < -1 || y > 1 || z < -1 || z > 1 || intensity < 0 || intensity > 1)
-                    throw new ArgumentOutOfRangeException(nameof(vertices), "Vertex components must be in the range [-1, 1] for position and [0, 1] for intensity.");
-
-                _vertices.Add(x);
-                _vertices.Add(y);
-                _vertices.Add(z);
-                _vertices.Add(intensity);
+                DrawPrimitiveVertex(x, y, z, intensity);
             }
+        }
+
+        private void DrawPrimitiveVertex(float x, float y, float z, float intensity)
+        {
+#if DEBUG
+            if (x < -1 || x > 1 || y < -1 || y > 1 || z < -1 || z > 1 || intensity < 0 || intensity > 1)
+                throw new ArgumentOutOfRangeException(nameof(intensity), "Vertex components must be in the range [-1, 1] for position and [0, 1] for intensity.");
+#endif
+
+            EnsureVertexCapacity(additionalFloats: 4);
+            _vertexData[_vertexFloatCount++] = x;
+            _vertexData[_vertexFloatCount++] = y;
+            _vertexData[_vertexFloatCount++] = z;
+            _vertexData[_vertexFloatCount++] = intensity;
         }
 
         public (int, char[]) Render()
@@ -160,40 +180,57 @@ void main() {
             BindVertexArray(_vertexArrayObject);
             BindBuffer(BufferTarget.ArrayBuffer, _vertexBufferObject);
 
-            if (_vertices.Count > 0)
+            if (_vertexFloatCount > 0)
             {
-                int vertexCount = _vertices.Count / 4;
-                int sizeInBytes = _vertices.Count * sizeof(float);
+                int vertexCount = _vertexFloatCount / 4;
+                int sizeInBytes = _vertexFloatCount * sizeof(float);
 
-                // BufferSubData(BufferTarget.ArrayBuffer, IntPtr.Zero, sizeInBytes, _vertices.ToArray());
-                BufferData(BufferTarget.ArrayBuffer, sizeInBytes, _vertices.ToArray(), BufferUsageHint.DynamicDraw);
-                CheckError();
+                if (sizeInBytes > _vertexBufferCapacityBytes)
+                {
+                    while (_vertexBufferCapacityBytes < sizeInBytes) _vertexBufferCapacityBytes *= 2;
+                    BufferData(BufferTarget.ArrayBuffer, _vertexBufferCapacityBytes, IntPtr.Zero, BufferUsageHint.StreamDraw);
+                }
+
+                BufferSubData(BufferTarget.ArrayBuffer, IntPtr.Zero, sizeInBytes, _vertexData);
                 DrawArrays(PrimitiveType.Triangles, 0, vertexCount);
             }
 
-            Finish();
+            Flush();
             CheckError();
 
-            var pixelData = new float[_bufferArea];
             ReadBuffer(ReadBufferMode.ColorAttachment0);
-            ReadPixels(0, 0, _bufferWidth, _bufferHeight, PixelFormat.Red, PixelType.Float, pixelData);
+            ReadPixels(0, 0, _bufferWidth, _bufferHeight, PixelFormat.Red, PixelType.Float, _pixelData);
             CheckError();
 
             ClearColor(0, 0, 0, 0);
             Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
-            _vertices.Clear();
+            _vertexFloatCount = 0;
 
-            const string chars = " .:^+$*#";
-            Span<char> data = new char[pixelData.Length];
-            for (int i = 0; i < pixelData.Length; i++)
+            int maxIndex = Ramp.Length - 1;
+            for (int i = 0; i < _pixelData.Length; i++)
             {
-                int index = (int)(pixelData[i] * (chars.Length - 1));
-                index = Math.Clamp(index, 0, chars.Length - 1);
-                data[i] = chars[index];
+                float v = _pixelData[i];
+                if (v < 0) v = 0;
+                else if (v > 1) v = 1;
+
+                int index = (int)(v * maxIndex);
+                _charData[i] = Ramp[index];
             }
-            return (0, data.ToArray());
+            return (0, _charData);
         }
 
+        private void EnsureVertexCapacity(int additionalFloats)
+        {
+            int required = _vertexFloatCount + additionalFloats;
+            if (required <= _vertexData.Length) return;
+
+            int newSize = _vertexData.Length;
+            while (newSize < required) newSize *= 2;
+
+            Array.Resize(ref _vertexData, newSize);
+        }
+
+        [Conditional("DEBUG")]
         private static void CheckError()
         {
             var error = GetError();
@@ -209,6 +246,7 @@ void main() {
             DeleteFramebuffer(_framebuffer);
             DeleteTexture(_renderTexture);
             DeleteRenderbuffer(_depthRenderBuffer);
+            _shader.Dispose();
             _window.Dispose();
         }
     }

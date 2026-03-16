@@ -9,21 +9,16 @@ namespace SomeSimpleConsoleGame
 
         void Update(double deltaTime);
     }
-    public sealed class SystemsUpdater
+    public sealed class SystemsUpdater : IDisposable
     {
         private static readonly double TicksToSeconds = 1.0 / Stopwatch.Frequency;
+        private static readonly Comparer<(IUpdateSystem system, byte priority, long lastCallTicks)> PriorityComparer =
+            Comparer<(IUpdateSystem, byte priority, long)>.Create(static (a, b) => b.priority.CompareTo(a.priority));
 
         private int _systemCount;
         private (IUpdateSystem system, byte priority, long lastCallTicks)[] _systems;
 
-        public SystemsUpdater()
-        {
-            _systems = ArrayPool<(IUpdateSystem, byte, long)>.Shared.Rent(4);
-        }
-        ~SystemsUpdater()
-        {
-            ArrayPool<(IUpdateSystem, byte, long)>.Shared.Return(_systems, true);
-        }
+        public SystemsUpdater() => _systems = ArrayPool<(IUpdateSystem, byte, long)>.Shared.Rent(4);
 
         public void Update()
         {
@@ -52,7 +47,24 @@ namespace SomeSimpleConsoleGame
 
             _systems[_systemCount++] = (system, priority, Stopwatch.GetTimestamp());
 
-            Array.Sort(_systems, 0, _systemCount, Comparer<(IUpdateSystem, byte priority, long)>.Create(static (a, b) => b.priority.CompareTo(a.priority)));
+            Array.Sort(_systems, 0, _systemCount, PriorityComparer);
+        }
+
+        public void Dispose()
+        {
+            var systems = _systems;
+            _systems = [];
+            _systemCount = 0;
+            if (systems.Length != 0)
+            {
+                foreach (var (system, _, _) in systems.AsSpan(0, _systemCount))
+                {
+                    if (system is IDisposable disposable) disposable.Dispose();
+                }
+                ArrayPool<(IUpdateSystem, byte, long)>.Shared.Return(systems, true);
+            }
+
+            GC.SuppressFinalize(this);
         }
     }
 }

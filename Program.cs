@@ -4,8 +4,6 @@ namespace SomeSimpleConsoleGame
 {
     internal sealed class Program
     {
-        private static SystemsUpdater? _systems;
-
         private const int STD_OUTPUT_HANDLE = -11;
         private const uint ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004;
 
@@ -13,15 +11,16 @@ namespace SomeSimpleConsoleGame
         {
             const int width = 120, height = 120;
 
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            if (OperatingSystem.IsWindows())
             {
                 Console.SetWindowSize(width, height);
                 Console.SetBufferSize(width, height);
                 EnableAnsiCodes();
             }
 
-            _systems = new();
-            GLContext context = new(width, height);
+            using var systems = new SystemsUpdater();
+            using GLContext context = new(width, height);
+            using InputController inputs = new();
 
             Mesh mesh = new([
                 new(-0.5f, -0.5f, -0.5f),
@@ -39,21 +38,30 @@ namespace SomeSimpleConsoleGame
                     0, 3, 7, 0, 7, 4,
                     1, 5, 6, 1, 6, 2,
                     0, 4, 5, 0, 5, 1,
-                    3, 2, 6, 3, 6, 7,
+                     3, 2, 6, 3, 6, 7,
                 ]);
 
-            _systems.AddSystem(new TestRotateSystem(mesh, context), 2);
-            _systems.AddSystem(new RenderSystem(width, height, 60, context), 1);
+            systems.AddSystem(new TestRotateSystem(mesh, context, MathF.PI / 10), 2);
+            systems.AddSystem(new RenderSystem(width, height, 60, context), 1);
 
-            while (true)
+            bool running = true;
+            while (running)
             {
-                _systems.Update();
+                inputs.PollEvents();
+
+                if (inputs.IsKeyDown(ConsoleKey.Escape) || inputs.IsKeyDown(ConsoleKey.Q))
+                {
+                    running = false;
+                    continue;
+                }
+
+                systems.Update();
             }
         }
 
         private static void EnableAnsiCodes()
         {
-            if (RuntimeInformation.IsOSPlatform(OSPlatform.Windows))
+            if (OperatingSystem.IsWindows())
             {
                 var handle = GetStdHandle(STD_OUTPUT_HANDLE);
                 _ = GetConsoleMode(handle, out uint mode);

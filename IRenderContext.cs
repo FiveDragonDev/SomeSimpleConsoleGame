@@ -4,4 +4,9 @@
     {
         (int startIndex, char[]) Render();
     }
+
+    public interface IRenderContextLowLevel : IRenderContext
+    {
+        void Render(ICharRenderTarget target);
+    }
 }

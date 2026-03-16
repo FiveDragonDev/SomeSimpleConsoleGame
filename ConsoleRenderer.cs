@@ -1,11 +1,21 @@
-﻿using System;
+﻿using System.Buffers;
 using System.Text;
 
 namespace SomeSimpleConsoleGame
 {
-    public sealed class ConsoleRenderer
+    public sealed class ConsoleRenderer : IDisposable, ICharRenderTarget
     {
-        public readonly int BufferWidth, BufferHeight, BufferArea;
+        public int Width { get; private set; }
+        public int Height { get; private set; }
+        public int Area { get; private set; }
+
+        public Span<char> GetBackBuffer() => BackBuffer.AsSpan();
+
+        private char[] BackBuffer => _charBuffers[1 - _frontBufferIndex];
+        private char[] FrontBuffer => _charBuffers[_frontBufferIndex];
+
+        private const string CursorHome = "\x1b[1;1H";
+        private const string CursorMovePrefix = "\x1b[";
 
         private int _frontBufferIndex;
         private readonly char[][] _charBuffers;
@@ -17,26 +27,29 @@ namespace SomeSimpleConsoleGame
 
         public ConsoleRenderer(int bufferWidth, int bufferHeight)
         {
-            BufferWidth = bufferWidth;
-            BufferHeight = bufferHeight;
-            BufferArea = bufferWidth * bufferHeight;
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bufferWidth);
+            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(bufferHeight);
+
+            Width = bufferWidth;
+            Height = bufferHeight;
+            Area = bufferWidth * bufferHeight;
 
             _charBuffers = [
-                GC.AllocateUninitializedArray<char>(BufferArea, true),
-                GC.AllocateUninitializedArray<char>(BufferArea, true)
+                GC.AllocateUninitializedArray<char>(Area, true),
+                GC.AllocateUninitializedArray<char>(Area, true)
                 ];
             BackBuffer.AsSpan().Fill(' ');
 
             _dirtyLines = new (int, int)?[bufferHeight];
 
-            _outputBuilder = new(BufferArea * 2);
+            _outputBuilder = new(Area * 2);
         }
 
-        public void Render() => RenderAsync().Wait();
+        public void Render() => RenderAsync().GetAwaiter().GetResult();
         public async Task RenderAsync()
         {
             _outputBuilder.Clear();
-            _outputBuilder.Append($"\x1b[1;1H");
+            _outputBuilder.Append(CursorHome);
 
             if (_fullRedrawNeeded) FullRedraw();
             else RedrawDirtyPixels();
@@ -56,15 +69,16 @@ namespace SomeSimpleConsoleGame
 
         private void RedrawDirtyPixels()
         {
-            for (int i = 0; i < BufferHeight; i++)
+            for (int i = 0; i < Height; i++)
             {
                 if (!_dirtyLines[i].HasValue) continue;
                 var (start, length) = _dirtyLines[i]!.Value;
-                _outputBuilder.Append($"\x1b[{i + 1};{start + 1}H");
+                AppendCursorPosition(row: i + 1, col: start + 1);
                 _outputBuilder.Append(FrontBuffer, GetBufferIndex(start, i), length);
             }
         }
 
+        public void ForceFullRedraw() => MarkDirtyAll();
         public void Clear()
         {
             BackBuffer.AsSpan().Fill(' ');
@@ -73,14 +87,87 @@ namespace SomeSimpleConsoleGame
         public void ClearLine(int line)
         {
             if (!CheckBounds(0, line)) return;
-            BackBuffer.AsSpan(GetBufferIndex(0, line), BufferWidth).Fill(' ');
-            MarkDityLine(line, 0, BufferWidth);
+            BackBuffer.AsSpan(GetBufferIndex(0, line), Width).Fill(' ');
+            MarkDirtyLine(line, 0, Width);
         }
         public void ClearLine(int line, int start, int length)
         {
             if (!CheckBounds(start, line)) return;
+            if (length <= 0) return;
+            if (start + length > Width) length = Width - start;
+            if (length <= 0) return;
             BackBuffer.AsSpan(GetBufferIndex(start, line), length).Fill(' ');
-            MarkDityLine(line, start, length);
+            MarkDirtyLine(line, start, length);
+        }
+
+        public void Fill(char c)
+        {
+            BackBuffer.AsSpan().Fill(c);
+            MarkDirtyAll();
+        }
+        public void FillRect(int x, int y, int width, int height, char c)
+        {
+            if (width <= 0 || height <= 0) return;
+            if (x >= Width || y >= Height) return;
+
+            int startX = Math.Max(x, 0);
+            int startY = Math.Max(y, 0);
+            int endXExclusive = Math.Min(x + width, Width);
+            int endYExclusive = Math.Min(y + height, Height);
+
+            int fillWidth = endXExclusive - startX;
+            if (fillWidth <= 0 || endYExclusive <= startY) return;
+
+            for (int row = startY; row < endYExclusive; row++)
+            {
+                BackBuffer.AsSpan(GetBufferIndex(startX, row), fillWidth).Fill(c);
+                MarkDirtyLine(row, startX, fillWidth);
+            }
+        }
+
+        public void DrawHorizontalLine(int x, int y, int length, char c)
+        {
+            if (length <= 0) return;
+            if (y < 0 || y >= Height) return;
+            if (x >= Width) return;
+
+            int startX = Math.Max(x, 0);
+            int endXExclusive = Math.Min(x + length, Width);
+            int drawLen = endXExclusive - startX;
+            if (drawLen <= 0) return;
+
+            BackBuffer.AsSpan(GetBufferIndex(startX, y), drawLen).Fill(c);
+            MarkDirtyLine(y, startX, drawLen);
+        }
+        public void DrawVerticalLine(int x, int y, int length, char c)
+        {
+            if (length <= 0) return;
+            if (x < 0 || x >= Width) return;
+            if (y >= Height) return;
+
+            int startY = Math.Max(y, 0);
+            int endYExclusive = Math.Min(y + length, Height);
+            if (endYExclusive <= startY) return;
+
+            for (int row = startY; row < endYExclusive; row++)
+                SetChar(x, row, c);
+        }
+
+        public void DrawBox(int x, int y, int width, int height, char border = '#', char? fill = null)
+        {
+            if (width <= 0 || height <= 0) return;
+
+            DrawHorizontalLine(x, y, width, border);
+            if (height > 1) DrawHorizontalLine(x, y + height - 1, width, border);
+
+            if (height > 2)
+            {
+                DrawVerticalLine(x, y + 1, height - 2, border);
+                if (width > 1) DrawVerticalLine(x + width - 1, y + 1, height - 2, border);
+            }
+
+            if (fill.HasValue && width > 2 && height > 2)
+                FillRect(x + 1, y + 1, width - 2, height - 2, fill.Value);
         }
 
         public void SwapBuffers() => _frontBufferIndex = 1 - _frontBufferIndex;
@@ -100,28 +187,89 @@ namespace SomeSimpleConsoleGame
 
             if (oldSpan.SequenceEqual(data)) return;
 
-            int startY = startIndex / BufferWidth;
-            int startX = startIndex % BufferWidth;
+            int startY = startIndex / Width;
+            int startX = startIndex % Width;
 
             int offset = 0;
             int remaining = data.Length;
 
-            int firstChunkLen = Math.Min(BufferWidth - startX, remaining);
-            CheckAndMark(startY, startX, firstChunkLen, oldSpan, data, ref offset, ref remaining);
+            int firstChunkLen = Math.Min(Width - startX, remaining);
+            CheckAndMark(this, startY, startX, firstChunkLen, oldSpan, data, ref offset, ref remaining);
 
             int currentRow = startY + 1;
-            while (remaining > BufferWidth)
+            while (remaining > Width)
             {
-                CheckAndMark(currentRow, 0, BufferWidth, oldSpan, data, ref offset, ref remaining);
+                CheckAndMark(this, currentRow, 0, Width, oldSpan, data, ref offset, ref remaining);
                 currentRow++;
             }
 
             if (remaining > 0)
             {
-                CheckAndMark(currentRow, 0, remaining, oldSpan, data, ref offset, ref remaining);
+                CheckAndMark(this, currentRow, 0, remaining, oldSpan, data, ref offset, ref remaining);
             }
 
             data.CopyTo(oldSpan);
+
+            static void CheckAndMark(ConsoleRenderer @this, int row, int start, int length, Span<char> oldSpan, ReadOnlySpan<char> data, ref int offset, ref int remaining)
+            {
+                var oldSegment = oldSpan.Slice(offset, length);
+                var newSegment = data.Slice(offset, length);
+
+                if (!oldSegment.SequenceEqual(newSegment))
+                    @this.MarkDirtyLine(row, start, length);
+
+                offset += length;
+                remaining -= length;
+            }
+        }
+
+        public void WriteSpan(int startIndex, ReadOnlySpan<char> data, bool markDirty = true)
+        {
+            if (data.Length == 0) return;
+            if (!CheckRange(startIndex, data.Length)) return;
+
+            data.CopyTo(BackBuffer.AsSpan(startIndex, data.Length));
+            if (markDirty) MarkDirty(startIndex, data.Length);
+        }
+
+        public void MarkDirty(int startIndex, int length)
+        {
+            if (length <= 0) return;
+            if (!CheckRange(startIndex, length)) return;
+
+            int row = startIndex / Width;
+            int col = startIndex % Width;
+            int remaining = length;
+
+            int firstChunkLen = Math.Min(Width - col, remaining);
+            MarkDirtyLine(row, col, firstChunkLen);
+            remaining -= firstChunkLen;
+            row++;
+
+            while (remaining > 0 && row < Height)
+            {
+                int chunkLen = Math.Min(Width, remaining);
+                MarkDirtyLine(row, 0, chunkLen);
+                remaining -= chunkLen;
+                row++;
+            }
+        }
+
+        public void MarkDirtyRect(int x, int y, int width, int height)
+        {
+            if (width <= 0 || height <= 0) return;
+            if (x >= Width || y >= Height) return;
+
+            int startX = Math.Max(x, 0);
+            int startY = Math.Max(y, 0);
+            int endXExclusive = Math.Min(x + width, Width);
+            int endYExclusive = Math.Min(y + height, Height);
+
+            int rowLen = endXExclusive - startX;
+            if (rowLen <= 0 || endYExclusive <= startY) return;
+
+            for (int row = startY; row < endYExclusive; row++)
+                MarkDirtyLine(row, startX, rowLen);
         }
 
         public void SetChar(int x, int y, char c)
@@ -130,36 +278,66 @@ namespace SomeSimpleConsoleGame
             if (!CheckBounds(index)) return;
             if (BackBuffer[index] == c) return;
             BackBuffer[index] = c;
-            MarkDityLine(y, x, 1);
+            MarkDirtyLine(y, x, 1);
+        }
+        public void SetString(int x, int y, string text)
+        {
+            if (text is null) return;
+            SetCharsBatch(x, y, text.AsSpan());
         }
         public void SetCharsBatch(int x, int y, ReadOnlySpan<char> chars)
         {
+            if (chars.Length == 0) return;
+            if (!CheckBounds(x, y)) return;
+
             int startIndex = GetBufferIndex(x, y);
-            if (!CheckBounds(startIndex)) return;
 
-            Span<char> correctedChars = stackalloc char[chars.Length];
-            int correctedIndex = 0;
-            for (int i = 0; i < chars.Length; i++)
+            const int StackLimit = 256;
+            char[]? rented = null;
+            Span<char> correctedChars = chars.Length <= StackLimit
+                ? stackalloc char[StackLimit]
+                : (rented = ArrayPool<char>.Shared.Rent(chars.Length));
+
+            try
             {
-                char ch = chars[i];
-                if (!char.IsControl(ch))
+                int correctedIndex = 0;
+                for (int i = 0; i < chars.Length; i++)
                 {
-                    correctedChars[correctedIndex++] = ch;
+                    char ch = chars[i];
+                    if (!char.IsControl(ch))
+                        correctedChars[correctedIndex++] = ch;
                 }
-            }
-            var filteredChars = correctedChars[..correctedIndex];
-            if (!CheckRange(startIndex, filteredChars.Length)) return;
 
-            var backSpan = BackBuffer.AsSpan(startIndex, filteredChars.Length);
-            if (backSpan.SequenceEqual(filteredChars)) return;
-            filteredChars.CopyTo(backSpan);
-            MarkDityLine(y, x, filteredChars.Length);
+                int maxLen = Math.Min(correctedIndex, Width - x);
+                if (maxLen <= 0) return;
+
+                var filteredChars = correctedChars[..maxLen];
+                if (!CheckRange(startIndex, filteredChars.Length)) return;
+
+                var backSpan = BackBuffer.AsSpan(startIndex, filteredChars.Length);
+                if (backSpan.SequenceEqual(filteredChars)) return;
+                filteredChars.CopyTo(backSpan);
+                MarkDirtyLine(y, x, filteredChars.Length);
+            }
+            finally
+            {
+                if (rented is not null) ArrayPool<char>.Shared.Return(rented);
+            }
         }
 
-        private void MarkDityLine(int row, int start, int length)
+        private void AppendCursorPosition(int row, int col)
+        {
+            _outputBuilder.Append(CursorMovePrefix);
+            _outputBuilder.Append(row);
+            _outputBuilder.Append(';');
+            _outputBuilder.Append(col);
+            _outputBuilder.Append('H');
+        }
+
+        private void MarkDirtyLine(int row, int start, int length)
         {
             if (!CheckBounds(start, row)) return;
-            if (start + length > BufferWidth) length = BufferWidth - start;
+            if (start + length > Width) length = Width - start;
 
             ref var line = ref _dirtyLines[row];
             if (!line.HasValue)
@@ -176,33 +354,33 @@ namespace SomeSimpleConsoleGame
 
             line = (newStart, newEnd - newStart);
         }
-        private void CheckAndMark(int row, int start, int length, Span<char> oldSpan, ReadOnlySpan<char> data, ref int offset, ref int remaining)
-        {
-            var oldSegment = oldSpan.Slice(offset, length);
-            var newSegment = data.Slice(offset, length);
-
-            if (!oldSegment.SequenceEqual(newSegment))
-                MarkDityLine(row, start, length);
-
-            offset += length;
-            remaining -= length;
-        }
         private void MarkDirtyAll()
         {
             _fullRedrawNeeded = true;
-            Array.Clear(_dirtyLines, 0, BufferHeight);
+            Array.Clear(_dirtyLines, 0, Height);
         }
 
-        private bool CheckBounds(int index) => index >= 0 && index < BufferArea;
-        private bool CheckBounds(int x, int y) => x >= 0 && x < BufferWidth && y >= 0 && y < BufferHeight;
+        private bool CheckBounds(int index) => index >= 0 && index < Area;
+        private bool CheckBounds(int x, int y) => x >= 0 && x < Width && y >= 0 && y < Height;
         private bool CheckRange(int startIndex, int length)
         {
             if (startIndex < 0 || length < 0) return false;
-            return (long)startIndex + length <= BufferArea;
+            return (long)startIndex + length <= Area;
         }
 
-        private int GetBufferIndex(int x, int y) => y * BufferWidth + x;
-        private char[] BackBuffer => _charBuffers[1 - _frontBufferIndex];
-        private char[] FrontBuffer => _charBuffers[_frontBufferIndex];
+        private int GetBufferIndex(int x, int y) => y * Width + x;
+
+        public void Dispose()
+        {
+            foreach (var buffer in _charBuffers)
+            {
+                Array.Clear(buffer, 0, Area);
+            }
+            Array.Clear(_charBuffers, 0, 2);
+
+            Array.Clear(_dirtyLines, 0, Height);
+
+            _outputBuilder.Clear();
+        }
     }
 }
