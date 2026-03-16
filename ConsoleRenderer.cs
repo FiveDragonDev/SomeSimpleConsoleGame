@@ -3,7 +3,7 @@ using System.Text;
 
 namespace SomeSimpleConsoleGame
 {
-    public sealed class ConsoleRenderer : IDisposable, ICharRenderTarget
+    public sealed class ConsoleRenderer : ICharRenderTarget, IDisposable
     {
         public int Width { get; private set; }
         public int Height { get; private set; }
@@ -16,10 +16,14 @@ namespace SomeSimpleConsoleGame
 
         private const string CursorHome = "\x1b[1;1H";
         private const string CursorMovePrefix = "\x1b[";
+        private const string BackgroundRgbPrefix = "\x1b[48;2;";
 
         private int _frontBufferIndex;
         private readonly char[][] _charBuffers;
 
+        private (byte, byte, byte) _currentBackgroundColor = (24, 8, 8);
+
+        private bool _colorRedrawNeeded = true;
         private bool _fullRedrawNeeded = true;
         private readonly (int start, int length)?[] _dirtyLines;
 
@@ -50,6 +54,7 @@ namespace SomeSimpleConsoleGame
         {
             _outputBuilder.Clear();
             _outputBuilder.Append(CursorHome);
+            if (_colorRedrawNeeded) RedrawColor();
 
             if (_fullRedrawNeeded) FullRedraw();
             else RedrawDirtyPixels();
@@ -60,6 +65,19 @@ namespace SomeSimpleConsoleGame
             _fullRedrawNeeded = false;
 
             await renderTask;
+
+            void RedrawColor()
+            {
+                var (r, g, b) = _currentBackgroundColor;
+                _outputBuilder.Append(BackgroundRgbPrefix);
+                _outputBuilder.Append(r);
+                _outputBuilder.Append(';');
+                _outputBuilder.Append(g);
+                _outputBuilder.Append(';');
+                _outputBuilder.Append(b);
+                _outputBuilder.Append('m');
+                _colorRedrawNeeded = false;
+            }
         }
 
         private void FullRedraw()
@@ -98,6 +116,13 @@ namespace SomeSimpleConsoleGame
             if (length <= 0) return;
             BackBuffer.AsSpan(GetBufferIndex(start, line), length).Fill(' ');
             MarkDirtyLine(line, start, length);
+        }
+
+        public void SetBackgroundColor(byte r, byte g, byte b)
+        {
+            if (_currentBackgroundColor == (r, g, b)) return;
+            _currentBackgroundColor = (r, g, b);
+            _colorRedrawNeeded = true;
         }
 
         public void Fill(char c)
