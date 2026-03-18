@@ -1,4 +1,4 @@
-﻿namespace SomeSimpleConsoleGame
+﻿namespace SomeSimpleConsoleGame.Core
 {
     public sealed class Mesh
     {
@@ -76,7 +76,7 @@
 
         public void ResetVertices()
         {
-            if (_originalVertices.Equals(_vertices)) return;
+            if (_originalVertices.AsSpan().SequenceEqual(_vertices)) return;
             Array.Copy(_originalVertices, _vertices, _vertices.Length);
             _hasChanged = true;
         }

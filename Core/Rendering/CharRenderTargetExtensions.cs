@@ -1,6 +1,6 @@
 using System.Buffers;
 
-namespace SomeSimpleConsoleGame
+namespace SomeSimpleConsoleGame.Core.Rendering
 {
     public static class CharRenderTargetExtensions
     {

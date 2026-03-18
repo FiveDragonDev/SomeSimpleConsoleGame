@@ -1,4 +1,4 @@
-namespace SomeSimpleConsoleGame
+namespace SomeSimpleConsoleGame.Core.Rendering
 {
     public interface ICharRenderTarget
     {

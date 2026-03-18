@@ -4,28 +4,29 @@ using OpenTK.Windowing.Desktop;
 using System.Diagnostics;
 using static OpenTK.Graphics.OpenGL4.GL;
 
-namespace SomeSimpleConsoleGame
+namespace SomeSimpleConsoleGame.Core.Rendering
 {
     public sealed class GLContext : IRenderContext, IDisposable
     {
         private readonly int _bufferWidth, _bufferHeight, _bufferArea;
 
         private readonly NativeWindow _window;
-        private readonly Shader _shader;
+        private Shader _shader;
+        private bool _ownsShader = true;
 
-        private readonly int _vertexArrayObject, _vertexBufferObject, _elementBufferObject, _depthRenderBuffer;
+        private readonly int _vertexArrayObject, _vertexBufferObject, _depthRenderBuffer;
         private int _vertexBufferCapacityBytes;
 
         private readonly int _framebuffer, _renderTexture;
 
         private float[] _vertexData;
         private int _vertexFloatCount;
-        private readonly float[] _pixelData;
+        private readonly byte[] _pixelData;
         private readonly char[] _charData;
 
-        private const string Ramp = " .:^+$*#";
+        private const string Ramp = " .,-:=+%*gh#@";
 
-        public GLContext(int width, int height, Shader? shader = null)
+        public GLContext(int width, int height)
         {
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(width);
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(height);
@@ -49,29 +50,10 @@ namespace SomeSimpleConsoleGame
             _bufferArea = width * height;
 
             _vertexData = new float[4096];
-            _pixelData = new float[_bufferArea];
+            _pixelData = new byte[_bufferArea];
             _charData = new char[_bufferArea];
 
-            _shader = shader ?? new Shader(
-@"
-#version 440 core
-layout(location = 0) in vec3 aPosition;
-layout(location = 1) in float aColor;
-out vec3 vCoord;
-out float vColor;
-void main() {
-    gl_Position = vec4(aPosition, 1.0);
-    vColor = aColor;
-    vCoord = aPosition.xyz;
-}",
-@"
-#version 440 core
-in vec3 vCoord;
-in float vColor;
-out float FragColor;
-void main() {
-    FragColor = vColor * (vCoord.z + 0.5);
- }");
+            _shader = CreateDefaultShader();
             _shader.Use();
 
             Viewport(0, 0, width, height);
@@ -90,7 +72,7 @@ void main() {
             BindTexture(TextureTarget.Texture2D, _renderTexture);
             TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.R32f,
                              width, height, 0,
-                             PixelFormat.Red, PixelType.Float, IntPtr.Zero);
+                             PixelFormat.Red, PixelType.UnsignedByte, IntPtr.Zero);
             TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
             TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Linear);
 
@@ -120,9 +102,6 @@ void main() {
             _vertexBufferObject = GenBuffer();
             BindBuffer(BufferTarget.ArrayBuffer, _vertexBufferObject);
 
-            _elementBufferObject = GenBuffer();
-            BindBuffer(BufferTarget.ElementArrayBuffer, _elementBufferObject);
-
             _vertexBufferCapacityBytes = _vertexData.Length * sizeof(float);
             BufferData(BufferTarget.ArrayBuffer, _vertexBufferCapacityBytes, IntPtr.Zero, BufferUsageHint.StreamDraw);
 
@@ -141,15 +120,23 @@ void main() {
             CheckError();
         }
 
-        public void DrawMesh(Mesh mesh)
+        public void MakeCurrent() => _window.MakeCurrent();
+
+        public void SetShader(Shader shader)
         {
-            var primitive = mesh.GetTriangleVertices();
-            for (int i = 0; i < primitive.Length; i++)
+            ArgumentNullException.ThrowIfNull(shader);
+            _window.MakeCurrent();
+
+            if (_ownsShader)
             {
-                var vertex = primitive[i];
-                DrawPrimitiveVertex(vertex.X, vertex.Y, vertex.Z, 1f);
+                _shader.Dispose();
+                _ownsShader = false;
             }
+
+            _shader = shader;
+            _shader.Use();
         }
+
         public void DrawPrimitive(ReadOnlySpan<(float, float, float, float)> vertices)
         {
             if (vertices.Length == 0) return;
@@ -158,12 +145,13 @@ void main() {
                 DrawPrimitiveVertex(x, y, z, intensity);
             }
         }
-
         private void DrawPrimitiveVertex(float x, float y, float z, float intensity)
         {
 #if DEBUG
-            if (x < -1 || x > 1 || y < -1 || y > 1 || z < -1 || z > 1 || intensity < 0 || intensity > 1)
-                throw new ArgumentOutOfRangeException(nameof(intensity), "Vertex components must be in the range [-1, 1] for position and [0, 1] for intensity.");
+            if (!float.IsFinite(x) || !float.IsFinite(y) || !float.IsFinite(z) || !float.IsFinite(intensity))
+                throw new ArgumentOutOfRangeException(nameof(intensity), "Vertex components must be finite.");
+            if (intensity < 0 || intensity > 1)
+                throw new ArgumentOutOfRangeException(nameof(intensity), "Intensity must be in the range [0, 1].");
 #endif
 
             EnsureVertexCapacity(additionalFloats: 4);
@@ -173,8 +161,11 @@ void main() {
             _vertexData[_vertexFloatCount++] = intensity;
         }
 
-        public (int, char[]) Render()
+        public void Render(ICharRenderTarget target)
         {
+            _window.MakeCurrent();
+            _shader.Use();
+
             BindFramebuffer(FramebufferTarget.Framebuffer, _framebuffer);
 
             BindVertexArray(_vertexArrayObject);
@@ -199,7 +190,7 @@ void main() {
             CheckError();
 
             ReadBuffer(ReadBufferMode.ColorAttachment0);
-            ReadPixels(0, 0, _bufferWidth, _bufferHeight, PixelFormat.Red, PixelType.Float, _pixelData);
+            ReadPixels(0, 0, _bufferWidth, _bufferHeight, PixelFormat.Red, PixelType.UnsignedByte, _pixelData);
             CheckError();
 
             ClearColor(0, 0, 0, 0);
@@ -207,16 +198,26 @@ void main() {
             _vertexFloatCount = 0;
 
             int maxIndex = Ramp.Length - 1;
-            for (int i = 0; i < _pixelData.Length; i++)
+            for (int y = 0; y < _bufferHeight; y++)
             {
-                float v = _pixelData[i];
-                if (v < 0) v = 0;
-                else if (v > 1) v = 1;
+                int srcRow = y;
+                int dstRow = _bufferHeight - 1 - y;
 
-                int index = (int)(v * maxIndex);
-                _charData[i] = Ramp[index];
+                int rowOffset = srcRow * _bufferWidth;
+                int dstOffset = dstRow * _bufferWidth;
+
+                for (int x = 0; x < _bufferWidth; x++)
+                {
+                    float v = _pixelData[rowOffset + x] / 255f;
+                    if (v < 0) v = 0;
+                    else if (v > 1) v = 1;
+
+                    v = MathF.Pow(v, 0.85f);
+                    int index = (int)(v * maxIndex);
+                    _charData[dstOffset + x] = Ramp[index];
+                }
             }
-            return (0, _charData);
+            _charData.CopyTo(target.GetBackBuffer()[.._bufferArea]);
         }
 
         private void EnsureVertexCapacity(int additionalFloats)
@@ -240,14 +241,37 @@ void main() {
 
         public void Dispose()
         {
+            _window.MakeCurrent();
+
             DeleteVertexArray(_vertexArrayObject);
             DeleteBuffer(_vertexBufferObject);
-            DeleteBuffer(_elementBufferObject);
             DeleteFramebuffer(_framebuffer);
             DeleteTexture(_renderTexture);
             DeleteRenderbuffer(_depthRenderBuffer);
-            _shader.Dispose();
+            if (_ownsShader) _shader.Dispose();
             _window.Dispose();
         }
+
+        private static Shader CreateDefaultShader() =>
+            new(
+@"
+#version 440 core
+layout(location = 0) in vec3 aPosition;
+layout(location = 1) in float aColor;
+out vec3 vCoord;
+out float vColor;
+void main() {
+    gl_Position = vec4(aPosition, 1.0);
+    vColor = aColor;
+    vCoord = aPosition.xyz;
+}",
+@"
+#version 440 core
+in vec3 vCoord;
+in float vColor;
+out float FragColor;
+void main() {
+    FragColor = vColor;
+ }");
     }
 }

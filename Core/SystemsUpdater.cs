@@ -1,7 +1,7 @@
 ﻿using System.Buffers;
 using System.Diagnostics;
 
-namespace SomeSimpleConsoleGame
+namespace SomeSimpleConsoleGame.Core
 {
     public interface IUpdateSystem
     {
@@ -29,7 +29,8 @@ namespace SomeSimpleConsoleGame
 
                 if (!system.IsReady()) continue;
 
-                system.Update((now - lastCallTicks) * TicksToSeconds);
+                var deltaTime = (now - lastCallTicks) * TicksToSeconds;
+                system.Update(deltaTime);
 
                 _systems[i].lastCallTicks = now;
             }
@@ -53,11 +54,12 @@ namespace SomeSimpleConsoleGame
         public void Dispose()
         {
             var systems = _systems;
+            int count = _systemCount;
             _systems = [];
             _systemCount = 0;
             if (systems.Length != 0)
             {
-                foreach (var (system, _, _) in systems.AsSpan(0, _systemCount))
+                foreach (var (system, _, _) in systems.AsSpan(0, count))
                 {
                     if (system is IDisposable disposable) disposable.Dispose();
                 }

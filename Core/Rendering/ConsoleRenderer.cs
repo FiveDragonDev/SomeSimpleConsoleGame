@@ -1,7 +1,7 @@
 ﻿using System.Buffers;
 using System.Text;
 
-namespace SomeSimpleConsoleGame
+namespace SomeSimpleConsoleGame.Core.Rendering
 {
     public sealed class ConsoleRenderer : ICharRenderTarget, IDisposable
     {
@@ -16,12 +16,15 @@ namespace SomeSimpleConsoleGame
 
         private const string CursorHome = "\x1b[1;1H";
         private const string CursorMovePrefix = "\x1b[";
+
         private const string BackgroundRgbPrefix = "\x1b[48;2;";
+        private const string ForegroundRgbPrefix = "\x1b[38;2;";
 
         private int _frontBufferIndex;
         private readonly char[][] _charBuffers;
 
-        private (byte, byte, byte) _currentBackgroundColor = (24, 8, 8);
+        private (byte, byte, byte) _currentBackgroundColor = (0, 0, 0);
+        private (byte, byte, byte) _currentForegroundColor = (255, 255, 255);
 
         private bool _colorRedrawNeeded = true;
         private bool _fullRedrawNeeded = true;
@@ -54,7 +57,11 @@ namespace SomeSimpleConsoleGame
         {
             _outputBuilder.Clear();
             _outputBuilder.Append(CursorHome);
-            if (_colorRedrawNeeded) RedrawColor();
+            if (_colorRedrawNeeded)
+            {
+                RedrawColor(BackgroundRgbPrefix, _currentBackgroundColor);
+                RedrawColor(ForegroundRgbPrefix, _currentForegroundColor);
+            }
 
             if (_fullRedrawNeeded) FullRedraw();
             else RedrawDirtyPixels();
@@ -66,10 +73,10 @@ namespace SomeSimpleConsoleGame
 
             await renderTask;
 
-            void RedrawColor()
+            void RedrawColor(string prefix, (byte, byte, byte) color)
             {
-                var (r, g, b) = _currentBackgroundColor;
-                _outputBuilder.Append(BackgroundRgbPrefix);
+                var (r, g, b) = color;
+                _outputBuilder.Append(prefix);
                 _outputBuilder.Append(r);
                 _outputBuilder.Append(';');
                 _outputBuilder.Append(g);
@@ -122,6 +129,12 @@ namespace SomeSimpleConsoleGame
         {
             if (_currentBackgroundColor == (r, g, b)) return;
             _currentBackgroundColor = (r, g, b);
+            _colorRedrawNeeded = true;
+        }
+        public void SetForegroundColor(byte r, byte g, byte b)
+        {
+            if (_currentForegroundColor == (r, g, b)) return;
+            _currentForegroundColor = (r, g, b);
             _colorRedrawNeeded = true;
         }
 

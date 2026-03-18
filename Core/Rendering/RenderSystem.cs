@@ -2,7 +2,7 @@
 
 using System.Globalization;
 
-namespace SomeSimpleConsoleGame
+namespace SomeSimpleConsoleGame.Core.Rendering
 {
     public sealed class RenderSystem : IUpdateSystem, IDisposable
     {
@@ -15,8 +15,8 @@ namespace SomeSimpleConsoleGame
         private readonly Stopwatch _frameTimer;
         private readonly int _targetFps;
         private readonly long _targetTicks;
-        private int _fps = 0;
-        private int _frameCount = 0;
+        private int _fps;
+        private int _frameCount;
 
         private long _nextFrameTicks;
 
@@ -30,6 +30,7 @@ namespace SomeSimpleConsoleGame
             _renderContext = renderContext;
             _showStats = showStats;
 
+            TargetDeltaTime = 1f / targetFPS;
             _targetFps = targetFPS;
             _targetTicks = Stopwatch.Frequency / _targetFps;
             _frameTimer = Stopwatch.StartNew();
@@ -40,32 +41,19 @@ namespace SomeSimpleConsoleGame
         {
             _renderTask?.GetAwaiter().GetResult();
 
-            if (_renderContext is IRenderContextLowLevel lowLevel)
-            {
-                lowLevel.Render(_renderer);
-            }
-            else
-            {
-                var (startIndex, data) = _renderContext.Render();
-                _renderer.SetData(startIndex, data);
-            }
+            _renderContext.Render(_renderer);
 
             if (_showStats)
             {
-                Span<char> buffer = stackalloc char[48];
-
-                // delta ms
                 int pos = 0;
+                Span<char> buffer = stackalloc char[64];
+
                 double ms = deltaTime * 1000;
                 ms.TryFormat(buffer[pos..], out int written, "F4", CultureInfo.InvariantCulture);
                 pos += written;
-                " ms".AsSpan().CopyTo(buffer[pos..]);
-                pos += 3;
+                " ms | ".AsSpan().CopyTo(buffer[pos..]);
+                pos += 6;
 
-                _renderer.SetCharsBatch(1, 1, buffer[..pos]);
-
-                // fps/target
-                pos = 0;
                 _fps.TryFormat(buffer[pos..], out written, provider: CultureInfo.InvariantCulture);
                 pos += written;
                 buffer[pos++] = '/';
@@ -74,7 +62,7 @@ namespace SomeSimpleConsoleGame
                 " fps".AsSpan().CopyTo(buffer[pos..]);
                 pos += 4;
 
-                _renderer.SetCharsBatch(13, 1, buffer[..pos]);
+                _renderer.SetCharsBatch(1, 1, buffer[..pos]);
             }
 
             _renderer.SwapBuffers();

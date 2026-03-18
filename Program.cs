@@ -1,71 +1,105 @@
-﻿using System.Runtime.InteropServices;
+﻿using SomeSimpleConsoleGame.Core;
+using SomeSimpleConsoleGame.Core.Physics;
+using SomeSimpleConsoleGame.Core.Rendering;
+using SomeSimpleConsoleGame.Demo;
+using System.Runtime.InteropServices;
 
 namespace SomeSimpleConsoleGame
 {
     internal sealed class Program
     {
-        private const int STD_OUTPUT_HANDLE = -11;
-        private const uint ENABLE_VIRTUAL_TERMINAL_PROCESSING = 0x0004;
+        private const int StdOutputHandle = -11;
+        private const uint EnableVirtualTerminalProcessing = 0x0004;
 
-        private static void Main()
+        private static void Main(string[] args)
         {
-            const int width = 120, height = 120;
+            int width = GetArgInt(args, "--w") ?? 120;
+            int height = GetArgInt(args, "--h") ?? 60;
 
+            bool? oldCursorVisible = null;
             if (OperatingSystem.IsWindows())
+            {
+                oldCursorVisible = Console.CursorVisible;
+                Console.CursorVisible = false;
+            }
+
+            if (OperatingSystem.IsWindows() && TrySetConsoleSize(width, height))
+            {
+                Console.Title = "Console 3D Demo";
+                EnableAnsiCodes();
+            }
+            else
+            {
+                width = Console.WindowWidth;
+                height = Console.WindowHeight;
+            }
+
+            try
+            {
+                using var systems = new SystemsUpdater();
+                using InputController inputs = new();
+
+                DemoState state = new(width, height);
+                DemoRenderContext context = new(state);
+
+                systems.AddSystem(new PhysicsSystem(30), 3);
+                systems.AddSystem(new DemoSceneSystem(context.GL, context.Shader, inputs, state), 2);
+                systems.AddSystem(new RenderSystem(width, height, 60, context, showStats: true), 1);
+
+                bool running = true;
+                while (running)
+                {
+                    inputs.PollEvents();
+
+                    if (inputs.IsKeyDown(ConsoleKey.Escape))
+                    {
+                        running = false;
+                        continue;
+                    }
+
+                    systems.Update();
+                }
+            }
+            finally
+            {
+                if (OperatingSystem.IsWindows() && oldCursorVisible.HasValue)
+                    Console.CursorVisible = oldCursorVisible.Value;
+            }
+        }
+
+        private static bool TrySetConsoleSize(int width, int height)
+        {
+            if (!OperatingSystem.IsWindows()) return false;
+
+            try
             {
                 Console.SetWindowSize(width, height);
                 Console.SetBufferSize(width, height);
-                EnableAnsiCodes();
+                return true;
             }
-
-            using var systems = new SystemsUpdater();
-            using GLContext context = new(width, height);
-            using InputController inputs = new();
-
-            Mesh mesh = new([
-                new(-0.5f, -0.5f, -0.5f),
-                new(0.5f, -0.5f, -0.5f),
-                new(0.5f, 0.5f, -0.5f),
-                new(-0.5f, 0.5f, -0.5f),
-                new(-0.5f, -0.5f, 0.5f),
-                new(0.5f, -0.5f, 0.5f),
-                new(0.5f, 0.5f, 0.5f),
-                new(-0.5f, 0.5f, 0.5f)
-                ],
-                [
-                    0, 1, 2, 0, 2, 3,
-                    4, 6, 5, 4, 7, 6,
-                    0, 3, 7, 0, 7, 4,
-                    1, 5, 6, 1, 6, 2,
-                    0, 4, 5, 0, 5, 1,
-                     3, 2, 6, 3, 6, 7,
-                ]);
-
-            systems.AddSystem(new TestRotateSystem(mesh, context, MathF.PI / 10), 2);
-            systems.AddSystem(new RenderSystem(width, height, 60, context), 1);
-
-            bool running = true;
-            while (running)
+            catch
             {
-                inputs.PollEvents();
-
-                if (inputs.IsKeyDown(ConsoleKey.Escape) || inputs.IsKeyDown(ConsoleKey.Q))
-                {
-                    running = false;
-                    continue;
-                }
-
-                systems.Update();
+                return false;
             }
+        }
+
+        private static int? GetArgInt(string[] args, string name)
+        {
+            for (int i = 0; i < args.Length - 1; i++)
+            {
+                if (!string.Equals(args[i], name, StringComparison.OrdinalIgnoreCase)) continue;
+                if (int.TryParse(args[i + 1], out int value)) return value;
+            }
+            return null;
         }
 
         private static void EnableAnsiCodes()
         {
             if (OperatingSystem.IsWindows())
             {
-                var handle = GetStdHandle(STD_OUTPUT_HANDLE);
+                var handle = GetStdHandle(StdOutputHandle);
                 _ = GetConsoleMode(handle, out uint mode);
-                _ = SetConsoleMode(handle, mode | ENABLE_VIRTUAL_TERMINAL_PROCESSING);
+                _ = SetConsoleMode(handle, mode | EnableVirtualTerminalProcessing);
             }
         }
 

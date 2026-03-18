@@ -2,7 +2,7 @@
 using OpenTK.Graphics.OpenGL4;
 using static OpenTK.Graphics.OpenGL4.GL;
 
-namespace SomeSimpleConsoleGame
+namespace SomeSimpleConsoleGame.Core.Rendering
 {
     public sealed class Shader : IDisposable
     {
@@ -54,6 +54,17 @@ namespace SomeSimpleConsoleGame
         public void Uniform(string name, in float value) => Uniform1(GetLocation(name), value);
         public void Uniform(string name, float x, float y) => Uniform2(GetLocation(name), new Vector2(x, y));
         public void Uniform(string name, float x, float y, float z) => Uniform3(GetLocation(name), new Vector3(x, y, z));
+        public void Uniform(string name, in System.Numerics.Matrix4x4 value)
+        {
+            var m = new OpenTK.Mathematics.Matrix4(
+                value.M11, value.M12, value.M13, value.M14,
+                value.M21, value.M22, value.M23, value.M24,
+                value.M31, value.M32, value.M33, value.M34,
+                value.M41, value.M42, value.M43, value.M44
+            );
+
+            UniformMatrix4(GetLocation(name), transpose: true, ref m);
+        }
 
         public void Use() => UseProgram(Handle);
 
