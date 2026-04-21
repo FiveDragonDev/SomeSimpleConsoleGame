@@ -1,4 +1,6 @@
-﻿namespace SomeSimpleConsoleGame.Core
+﻿using Assimp;
+
+namespace SomeSimpleConsoleGame.Core
 {
     public sealed class Mesh
     {
@@ -21,8 +23,15 @@
 
             if (triangles.Length % 3 != 0)
                 throw new ArgumentException("Triangles array length must be a multiple of 3", nameof(triangles));
+
             if (triangles.Any(index => index < 0 || index >= vertices.Length))
                 throw new ArgumentException("Triangle index out of range", nameof(triangles));
+
+            for (int i = 0; i < triangles.Length; i++)
+            {
+                if (triangles[i] < 0 || triangles[i] >= vertices.Length)
+                    throw new ArgumentException("Triangle index out of range", nameof(triangles));
+            }
 
             _vertices = [.. vertices];
             _originalVertices = [.. vertices];
@@ -31,6 +40,63 @@
 
             VertexCount = vertices.Length;
             TriangleCount = triangles.Length / 3;
+        }
+        public Mesh(ReadOnlySpan<Vertex> vertices, ReadOnlySpan<int> triangles)
+        {
+            if (vertices.IsEmpty) throw new ArgumentNullException(nameof(vertices));
+            if (triangles.IsEmpty) throw new ArgumentNullException(nameof(triangles));
+
+            if (triangles.Length % 3 != 0)
+                throw new ArgumentException("Triangles array length must be a multiple of 3", nameof(triangles));
+            for (int i = 0; i < triangles.Length; i++)
+            {
+                if (triangles[i] < 0 || triangles[i] >= vertices.Length)
+                    throw new ArgumentException("Triangle index out of range", nameof(triangles));
+            }
+
+            _vertices = [.. vertices];
+            _originalVertices = [.. vertices];
+            _triangles = [.. triangles];
+            _primitiveVertices = new Vertex[triangles.Length];
+
+            VertexCount = vertices.Length;
+            TriangleCount = triangles.Length / 3;
+        }
+
+        public static Mesh FromFile(string path)
+        {
+            if (string.IsNullOrEmpty(path))
+                throw new ArgumentException("Path cannot be null or empty.", nameof(path));
+
+            AssimpContext importer = new();
+            var scene = importer.ImportFile(path, PostProcessSteps.Triangulate | PostProcessSteps.GenerateNormals | PostProcessSteps.GenerateUVCoords);
+
+            if (scene == null || scene.MeshCount == 0)
+                throw new InvalidOperationException("No meshes found in the file.");
+
+            var assimpMesh = scene.Meshes[0];
+
+            Span<Vertex> vertices = stackalloc Vertex[assimpMesh.VertexCount];
+
+            for (int i = 0; i < assimpMesh.VertexCount; i++)
+            {
+                var vertex = assimpMesh.Vertices[i];
+                vertices[i] = new(vertex.X, vertex.Y, vertex.Z);
+            }
+
+            Span<int> triangles = new int[assimpMesh.FaceCount * 3];
+            for (int i = 0; i < assimpMesh.FaceCount; i++)
+            {
+                var face = assimpMesh.Faces[i];
+                if (face.IndexCount != 3)
+                    throw new NotSupportedException("Only triangular faces are supported.");
+
+                triangles[i * 3] = face.Indices[0];
+                triangles[i * 3 + 1] = face.Indices[1];
+                triangles[i * 3 + 2] = face.Indices[2];
+            }
+
+            return new Mesh(vertices, triangles);
         }
 
         public ReadOnlySpan<Vertex> GetVertices() => _vertices;

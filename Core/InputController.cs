@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 
 namespace SomeSimpleConsoleGame.Core
 {
-    public sealed class InputController : IDisposable
+    public sealed partial class InputController : IDisposable
     {
         private struct KeyState
         {
@@ -19,7 +19,7 @@ namespace SomeSimpleConsoleGame.Core
             }
         }
 
-        private static readonly ConsoleKey[] s_allKeys = Enum.GetValues<ConsoleKey>();
+        private static readonly ConsoleKey[] _allKeys = Enum.GetValues<ConsoleKey>();
 
         private readonly Dictionary<ConsoleKey, KeyState> _keyStates = [];
 
@@ -53,9 +53,9 @@ namespace SomeSimpleConsoleGame.Core
             {
                 _currentModifiers = QueryCurrentModifiersWindows();
 
-                for (int i = 0; i < s_allKeys.Length; i++)
+                for (int i = 0; i < _allKeys.Length; i++)
                 {
-                    var key = s_allKeys[i];
+                    var key = _allKeys[i];
                     int vk = (int)key;
                     if ((uint)vk > 0xFF) continue;
 
@@ -83,8 +83,7 @@ namespace SomeSimpleConsoleGame.Core
                     }
                 }
 
-                while (Console.KeyAvailable)
-                    _ = Console.ReadKey(true);
+                while (Console.KeyAvailable) _ = Console.ReadKey(true);
 
                 return;
             }
@@ -192,7 +191,7 @@ namespace SomeSimpleConsoleGame.Core
         private static bool IsVirtualKeyDownWindows(int vKey) =>
             (GetAsyncKeyState(vKey) & 0x8000) != 0;
 
-        [DllImport("user32.dll")]
-        private static extern short GetAsyncKeyState(int vKey);
+        [LibraryImport("user32.dll")]
+        private static partial short GetAsyncKeyState(int vKey);
     }
 }

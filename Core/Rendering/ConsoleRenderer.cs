@@ -1,9 +1,11 @@
 ﻿using System.Buffers;
+using System.Runtime.CompilerServices;
+using System.Runtime.InteropServices;
 using System.Text;
 
 namespace SomeSimpleConsoleGame.Core.Rendering
 {
-    public sealed class ConsoleRenderer : ICharRenderTarget, IDisposable
+    public sealed partial class ConsoleRenderer : ICharRenderTarget, IDisposable
     {
         public int Width { get; private set; }
         public int Height { get; private set; }
@@ -11,12 +13,33 @@ namespace SomeSimpleConsoleGame.Core.Rendering
 
         public Span<char> GetBackBuffer() => BackBuffer.AsSpan();
 
+        public void UpdateBackBuffer(ReadOnlySpan<char> src)
+        {
+            if (src.Length < Area) throw new ArgumentException("Source span is too small", nameof(src));
+
+            // For each row, compare with existing back buffer row and copy only when different.
+            int offset = 0;
+            for (int row = 0; row < Height; row++)
+            {
+                var srcRow = src.Slice(offset, Width);
+                var dstRow = BackBuffer.AsSpan(offset, Width);
+                if (!srcRow.SequenceEqual(dstRow))
+                {
+                    srcRow.CopyTo(dstRow);
+                    // mark the whole row dirty; MarkDirtyLine will merge ranges if called multiple times
+                    MarkDirtyLine(row, 0, Width);
+                }
+                offset += Width;
+            }
+        }
+
         private char[] BackBuffer => _charBuffers[1 - _frontBufferIndex];
         private char[] FrontBuffer => _charBuffers[_frontBufferIndex];
 
         private const string CursorHome = "\x1b[1;1H";
         private const string CursorMovePrefix = "\x1b[";
 
+        private const string ResetColor = "\x1b[0m";
         private const string BackgroundRgbPrefix = "\x1b[48;2;";
         private const string ForegroundRgbPrefix = "\x1b[38;2;";
 
@@ -29,6 +52,7 @@ namespace SomeSimpleConsoleGame.Core.Rendering
         private bool _colorRedrawNeeded = true;
         private bool _fullRedrawNeeded = true;
         private readonly (int start, int length)?[] _dirtyLines;
+        private bool _hasPendingRedraw;
 
         private readonly StringBuilder _outputBuilder;
 
@@ -53,43 +77,87 @@ namespace SomeSimpleConsoleGame.Core.Rendering
         }
 
         public void Render() => RenderAsync().GetAwaiter().GetResult();
-        public async Task RenderAsync()
+        public Task RenderAsync() => RenderAnsiAsync();
+
+        private async Task RenderAnsiAsync()
         {
+            if (!_fullRedrawNeeded)
+            {
+                int dirtyChars = 0;
+                bool anyDirty = false;
+
+                for (int i = 0; i < _dirtyLines.Length; i++)
+                {
+                    if (!_dirtyLines[i].HasValue) continue;
+                    anyDirty = true;
+                    dirtyChars += _dirtyLines[i]!.Value.length;
+
+                    if (dirtyChars >= Area * 3 / 5)
+                    {
+                        _fullRedrawNeeded = true;
+                        break;
+                    }
+                }
+
+                if (!_fullRedrawNeeded && !anyDirty && !_colorRedrawNeeded) return;
+            }
+
+            if (_fullRedrawNeeded)
+            {
+                await RenderAnsiFullAsync();
+                _dirtyLines.AsSpan().Clear();
+                _fullRedrawNeeded = false;
+                _hasPendingRedraw = false;
+                return;
+            }
+
             _outputBuilder.Clear();
             _outputBuilder.Append(CursorHome);
             if (_colorRedrawNeeded)
             {
-                RedrawColor(BackgroundRgbPrefix, _currentBackgroundColor);
-                RedrawColor(ForegroundRgbPrefix, _currentForegroundColor);
+                AppendAnsiColor(BackgroundRgbPrefix, _currentBackgroundColor);
+                AppendAnsiColor(ForegroundRgbPrefix, _currentForegroundColor);
+                _colorRedrawNeeded = false;
             }
 
-            if (_fullRedrawNeeded) FullRedraw();
-            else RedrawDirtyPixels();
+            RedrawDirtyPixels();
 
             var renderTask = Console.Out.WriteAsync(_outputBuilder);
 
             _dirtyLines.AsSpan().Clear();
             _fullRedrawNeeded = false;
+            _hasPendingRedraw = false;
 
             await renderTask;
-
-            void RedrawColor(string prefix, (byte, byte, byte) color)
-            {
-                var (r, g, b) = color;
-                _outputBuilder.Append(prefix);
-                _outputBuilder.Append(r);
-                _outputBuilder.Append(';');
-                _outputBuilder.Append(g);
-                _outputBuilder.Append(';');
-                _outputBuilder.Append(b);
-                _outputBuilder.Append('m');
-                _colorRedrawNeeded = false;
-            }
         }
 
-        private void FullRedraw()
+        private async Task RenderAnsiFullAsync()
         {
-            _outputBuilder.Append(FrontBuffer);
+            var writer = Console.Out;
+            await writer.WriteAsync(CursorHome);
+
+            if (_colorRedrawNeeded)
+            {
+                _outputBuilder.Clear();
+                AppendAnsiColor(BackgroundRgbPrefix, _currentBackgroundColor);
+                AppendAnsiColor(ForegroundRgbPrefix, _currentForegroundColor);
+                _colorRedrawNeeded = false;
+                await writer.WriteAsync(_outputBuilder);
+            }
+
+            await writer.WriteAsync(FrontBuffer, 0, Area);
+        }
+
+        private void AppendAnsiColor(string prefix, (byte, byte, byte) color)
+        {
+            var (r, g, b) = color;
+            _outputBuilder.Append(prefix);
+            _outputBuilder.Append(r);
+            _outputBuilder.Append(';');
+            _outputBuilder.Append(g);
+            _outputBuilder.Append(';');
+            _outputBuilder.Append(b);
+            _outputBuilder.Append('m');
         }
 
         private void RedrawDirtyPixels()
@@ -272,8 +340,15 @@ namespace SomeSimpleConsoleGame.Core.Rendering
 
         public void MarkDirty(int startIndex, int length)
         {
+            if (_fullRedrawNeeded) return;
             if (length <= 0) return;
             if (!CheckRange(startIndex, length)) return;
+
+            if (startIndex == 0 && length >= Area)
+            {
+                MarkDirtyAll();
+                return;
+            }
 
             int row = startIndex / Width;
             int col = startIndex % Width;
@@ -295,6 +370,7 @@ namespace SomeSimpleConsoleGame.Core.Rendering
 
         public void MarkDirtyRect(int x, int y, int width, int height)
         {
+            if (_fullRedrawNeeded) return;
             if (width <= 0 || height <= 0) return;
             if (x >= Width || y >= Height) return;
 
@@ -374,6 +450,7 @@ namespace SomeSimpleConsoleGame.Core.Rendering
 
         private void MarkDirtyLine(int row, int start, int length)
         {
+            if (_fullRedrawNeeded) return;
             if (!CheckBounds(start, row)) return;
             if (start + length > Width) length = Width - start;
 
@@ -391,12 +468,16 @@ namespace SomeSimpleConsoleGame.Core.Rendering
             int newEnd = Math.Max(oldEnd, start + length);
 
             line = (newStart, newEnd - newStart);
+            _hasPendingRedraw = true;
         }
         private void MarkDirtyAll()
         {
             _fullRedrawNeeded = true;
             Array.Clear(_dirtyLines, 0, Height);
+            _hasPendingRedraw = true;
         }
+
+        public bool HasPendingRedraw => _hasPendingRedraw || _colorRedrawNeeded || _fullRedrawNeeded;
 
         private bool CheckBounds(int index) => index >= 0 && index < Area;
         private bool CheckBounds(int x, int y) => x >= 0 && x < Width && y >= 0 && y < Height;
@@ -419,6 +500,50 @@ namespace SomeSimpleConsoleGame.Core.Rendering
             Array.Clear(_dirtyLines, 0, Height);
 
             _outputBuilder.Clear();
+
+            Console.Write(ResetColor);
         }
+
+        private const int StdOutputHandle = -11;
+        private const uint EnableVirtualTerminalProcessing = 0x0004;
+
+        [StructLayout(LayoutKind.Explicit)]
+        private readonly struct CharInfo
+        {
+            [FieldOffset(0)]
+            public readonly char UnicodeChar;
+
+            [FieldOffset(2)]
+            public readonly ushort Attributes;
+
+            public CharInfo(char unicodeChar, ushort attributes)
+            {
+                UnicodeChar = unicodeChar;
+                Attributes = attributes;
+            }
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private readonly struct Coord(short x, short y)
+        {
+            public readonly short X = x;
+            public readonly short Y = y;
+        }
+
+        [StructLayout(LayoutKind.Sequential)]
+        private struct SmallRect(short left, short top, short right, short bottom)
+        {
+            public short Left = left;
+            public short Top = top;
+            public short Right = right;
+            public short Bottom = bottom;
+        }
+
+        [LibraryImport("kernel32.dll", SetLastError = true)]
+        private static partial nint GetStdHandle(int nStdHandle);
+
+        [LibraryImport("kernel32.dll", SetLastError = true)]
+        [return: MarshalAs(UnmanagedType.Bool)]
+        private static partial bool GetConsoleMode(nint hConsoleHandle, out uint lpMode);
     }
 }

@@ -7,11 +7,11 @@ namespace SomeSimpleConsoleGame.Core
     {
         bool IsReady() => true;
 
-        void Update(double deltaTime);
+        void Update(float deltaTime);
     }
     public sealed class SystemsUpdater : IDisposable
     {
-        private static readonly double TicksToSeconds = 1.0 / Stopwatch.Frequency;
+        private static readonly float TicksToSeconds = 1f / Stopwatch.Frequency;
         private static readonly Comparer<(IUpdateSystem system, byte priority, long lastCallTicks)> PriorityComparer =
             Comparer<(IUpdateSystem, byte priority, long)>.Create(static (a, b) => b.priority.CompareTo(a.priority));
 

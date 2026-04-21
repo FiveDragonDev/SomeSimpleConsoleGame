@@ -1,16 +1,14 @@
 ﻿using SomeSimpleConsoleGame.Core;
 using SomeSimpleConsoleGame.Core.Physics;
 using SomeSimpleConsoleGame.Core.Rendering;
+using SomeSimpleConsoleGame.Core.World;
 using SomeSimpleConsoleGame.Demo;
-using System.Runtime.InteropServices;
+using System.Numerics;
 
 namespace SomeSimpleConsoleGame
 {
     internal sealed class Program
     {
-        private const int StdOutputHandle = -11;
-        private const uint EnableVirtualTerminalProcessing = 0x0004;
-
         private static void Main(string[] args)
         {
             int width = GetArgInt(args, "--w") ?? 120;
@@ -21,14 +19,11 @@ namespace SomeSimpleConsoleGame
             {
                 oldCursorVisible = Console.CursorVisible;
                 Console.CursorVisible = false;
+                Console.Title = "Console 3D Demo";
+                ConsoleUtils.EnableAnsiCodes();
             }
 
-            if (OperatingSystem.IsWindows() && TrySetConsoleSize(width, height))
-            {
-                Console.Title = "Console 3D Demo";
-                EnableAnsiCodes();
-            }
-            else
+            if (!ConsoleUtils.TrySetConsoleSize(width, height))
             {
                 width = Console.WindowWidth;
                 height = Console.WindowHeight;
@@ -36,26 +31,36 @@ namespace SomeSimpleConsoleGame
 
             try
             {
-                using var systems = new SystemsUpdater();
+                using SystemsUpdater systems = new();
                 using InputController inputs = new();
 
                 DemoState state = new(width, height);
                 DemoRenderContext context = new(state);
 
-                systems.AddSystem(new PhysicsSystem(30), 3);
-                systems.AddSystem(new DemoSceneSystem(context.GL, context.Shader, inputs, state), 2);
-                systems.AddSystem(new RenderSystem(width, height, 60, context, showStats: true), 1);
+                using World world = new();
+
+                var physics = new PhysicsSystem(world, 20);
+                physics.AddGlobalForce(_ = new GravityForce(new Vector3(0, -2, 0)));
+                physics.AddGlobalForce(_ = new DragForce(0.15f, 0));
+
+                ScreenShakeSystem shaker = new(3, 6, 13);
+
+                systems.AddSystem(shaker, 0);
+                // systems.AddSystem(physics, 3);
+                systems.AddSystem(_ = new DemoSceneSystem(context.GL, context.Shader, inputs, state, world), 2);
+                systems.AddSystem(_ = new RenderSystem(width, height, 60, context, showStats: true), 1);
 
                 bool running = true;
                 while (running)
                 {
                     inputs.PollEvents();
 
-                    if (inputs.IsKeyDown(ConsoleKey.Escape))
+                    if (inputs.IsKeyPressed(ConsoleKey.Escape))
                     {
                         running = false;
                         continue;
                     }
+                    if (inputs.IsKeyDown(ConsoleKey.J)) shaker.AddAmplitude(1);
 
                     systems.Update();
                 }
@@ -64,22 +69,6 @@ namespace SomeSimpleConsoleGame
             {
                 if (OperatingSystem.IsWindows() && oldCursorVisible.HasValue)
                     Console.CursorVisible = oldCursorVisible.Value;
-            }
-        }
-
-        private static bool TrySetConsoleSize(int width, int height)
-        {
-            if (!OperatingSystem.IsWindows()) return false;
-
-            try
-            {
-                Console.SetWindowSize(width, height);
-                Console.SetBufferSize(width, height);
-                return true;
-            }
-            catch
-            {
-                return false;
             }
         }
 
@@ -92,22 +81,5 @@ namespace SomeSimpleConsoleGame
             }
             return null;
         }
-
-        private static void EnableAnsiCodes()
-        {
-            if (OperatingSystem.IsWindows())
-            {
-                var handle = GetStdHandle(StdOutputHandle);
-                _ = GetConsoleMode(handle, out uint mode);
-                _ = SetConsoleMode(handle, mode | EnableVirtualTerminalProcessing);
-            }
-        }
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern IntPtr GetStdHandle(int nStdHandle);
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool GetConsoleMode(IntPtr hConsoleHandle, out uint lpMode);
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool SetConsoleMode(IntPtr hConsoleHandle, uint dwMode);
     }
 }

@@ -1,3 +1,5 @@
+using SomeSimpleConsoleGame.Core;
+using SomeSimpleConsoleGame.Core.Extensions;
 using System.Numerics;
 
 namespace SomeSimpleConsoleGame.Demo
@@ -8,6 +10,7 @@ namespace SomeSimpleConsoleGame.Demo
         public int BufferHeight { get; }
 
         public bool Paused { get; set; }
+        public float FOV { get; set; } = MathUtils.HalfPi - MathUtils.Deg2Rad;
         public int SceneIndex { get; set; }
 
         public bool LockCamera { get; set; }
@@ -20,7 +23,7 @@ namespace SomeSimpleConsoleGame.Demo
         public (byte r, byte g, byte b) ForegroundRgb { get; set; } = (255, 255, 235);
 
         public Camera3D Camera;
-        public Vector3 LightDirectionWorld = Vector3.Normalize(new Vector3(-0.4f, 0.85f, -0.2f));
+        public Vector3 LightDirectionWorld = new Vector3(-0.4f, 0.85f, -0.2f).Normalized();
 
         public float Ambient = 0.1f;
         public float Diffuse = 0.88f;
@@ -37,13 +40,13 @@ namespace SomeSimpleConsoleGame.Demo
 
             Camera = new Camera3D
             {
-                Position = new Vector3(0, 0.35f, -3.3f),
+                Position = new(0, 0.35f, -3.3f),
                 Yaw = 0f,
                 Pitch = 0f,
-                FovRadians = MathF.PI / 2f - MathF.PI / 180f,
-                Near = 0.05f,
-                Far = 25f,
-                CharPixelAspect = 8f / 9,
+                FovRadians = MathUtils.HalfPi - MathUtils.Deg2Rad,
+                Near = 0.03f,
+                Far = 20f,
+                CharPixelAspect = 6f / 9,
             };
         }
 

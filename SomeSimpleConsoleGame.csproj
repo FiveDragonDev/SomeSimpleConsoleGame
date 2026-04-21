@@ -6,10 +6,21 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <StartupObject>SomeSimpleConsoleGame.Program</StartupObject>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <ItemGroup>
+    <Compile Remove="F:\Projects\CSharp\SomeSimpleConsoleGame\.dotnet_home\nuget\packages\microsoft.visualstudio.diagnosticshub.benchmarkdotnetdiagnosers\18.6.37125.3\contentFiles\cs\any\BenchmarkProfilerAgentConfig.g.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="AssimpNet" Version="4.1.0" />
     <PackageReference Include="OpenTK" Version="4.9.4" />
+    <PackageReference Include="System.Drawing.Common" Version="10.0.5" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include=".dotnet_home\nuget\packages\microsoft.visualstudio.diagnosticshub.benchmarkdotnetdiagnosers\18.6.37125.3\contentFiles\cs\any\" />
   </ItemGroup>
 
 </Project>

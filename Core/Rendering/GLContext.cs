@@ -21,10 +21,12 @@ namespace SomeSimpleConsoleGame.Core.Rendering
 
         private float[] _vertexData;
         private int _vertexFloatCount;
+
         private readonly byte[] _pixelData;
         private readonly char[] _charData;
 
-        private const string Ramp = " .,-:=+%*gh#@";
+        private const string Ramp = " .^:+1f$Zg#@";
+        private readonly char[] _charLookup;
 
         public GLContext(int width, int height)
         {
@@ -33,6 +35,7 @@ namespace SomeSimpleConsoleGame.Core.Rendering
 
             NativeWindowSettings nativeSettings = new()
             {
+                Title = "GL Context",
                 ClientSize = new(1, 1),
                 WindowBorder = WindowBorder.Hidden,
                 WindowState = WindowState.Minimized,
@@ -52,9 +55,22 @@ namespace SomeSimpleConsoleGame.Core.Rendering
             _vertexData = new float[4096];
             _pixelData = new byte[_bufferArea];
             _charData = new char[_bufferArea];
+            _charData.AsSpan().Fill(' ');
 
             _shader = CreateDefaultShader();
             _shader.Use();
+
+            _charLookup = new char[256];
+            int maxIndex = Ramp.Length - 1;
+            for (int i = 0; i < 256; i++)
+            {
+                float v = i / 255f;
+                v = MathF.Pow(v, 0.85f);
+                int index = (int)(v * maxIndex);
+                if (index < 0) index = 0;
+                else if (index > maxIndex) index = maxIndex;
+                _charLookup[i] = Ramp[index];
+            }
 
             Viewport(0, 0, width, height);
 
@@ -65,12 +81,15 @@ namespace SomeSimpleConsoleGame.Core.Rendering
             CullFace(TriangleFace.Back);
             FrontFace(FrontFaceDirection.Cw);
 
+            Enable(EnableCap.PolygonSmooth);
+            Enable(EnableCap.LineSmooth);
+
             _framebuffer = GenFramebuffer();
             BindFramebuffer(FramebufferTarget.Framebuffer, _framebuffer);
 
             _renderTexture = GenTexture();
             BindTexture(TextureTarget.Texture2D, _renderTexture);
-            TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.R32f,
+            TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.R8,
                              width, height, 0,
                              PixelFormat.Red, PixelType.UnsignedByte, IntPtr.Zero);
             TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Linear);
@@ -137,21 +156,30 @@ namespace SomeSimpleConsoleGame.Core.Rendering
             _shader.Use();
         }
 
-        public void DrawPrimitive(ReadOnlySpan<(float, float, float, float)> vertices)
+        public void DrawTriangles(ReadOnlySpan<(float X, float Y, float Z, float Intensity)> vertices)
         {
             if (vertices.Length == 0) return;
-            foreach (var (x, y, z, intensity) in vertices)
+
+            int additionalFloats = vertices.Length * 4;
+            EnsureVertexCapacity(additionalFloats);
+
+            for (int i = 0; i < vertices.Length; i++)
             {
-                DrawPrimitiveVertex(x, y, z, intensity);
+                var (X, Y, Z, Intensity) = vertices[i];
+                _vertexData[_vertexFloatCount++] = X;
+                _vertexData[_vertexFloatCount++] = Y;
+                _vertexData[_vertexFloatCount++] = Z;
+                _vertexData[_vertexFloatCount++] = Intensity;
             }
         }
         private void DrawPrimitiveVertex(float x, float y, float z, float intensity)
         {
 #if DEBUG
-            if (!float.IsFinite(x) || !float.IsFinite(y) || !float.IsFinite(z) || !float.IsFinite(intensity))
-                throw new ArgumentOutOfRangeException(nameof(intensity), "Vertex components must be finite.");
-            if (intensity < 0 || intensity > 1)
-                throw new ArgumentOutOfRangeException(nameof(intensity), "Intensity must be in the range [0, 1].");
+            if (!float.IsFinite(x)) throw new ArgumentOutOfRangeException(nameof(x), "Vertex components must be finite.");
+            if (!float.IsFinite(y)) throw new ArgumentOutOfRangeException(nameof(y), "Vertex components must be finite.");
+            if (!float.IsFinite(z)) throw new ArgumentOutOfRangeException(nameof(z), "Vertex components must be finite.");
+            if (!float.IsFinite(intensity)) throw new ArgumentOutOfRangeException(nameof(intensity), "Vertex components must be finite.");
+            if (intensity < 0 || intensity > 1) throw new ArgumentOutOfRangeException(nameof(intensity), "Intensity must be in the range [0, 1].");
 #endif
 
             EnsureVertexCapacity(additionalFloats: 4);
@@ -197,7 +225,6 @@ namespace SomeSimpleConsoleGame.Core.Rendering
             Clear(ClearBufferMask.ColorBufferBit | ClearBufferMask.DepthBufferBit);
             _vertexFloatCount = 0;
 
-            int maxIndex = Ramp.Length - 1;
             for (int y = 0; y < _bufferHeight; y++)
             {
                 int srcRow = y;
@@ -208,16 +235,11 @@ namespace SomeSimpleConsoleGame.Core.Rendering
 
                 for (int x = 0; x < _bufferWidth; x++)
                 {
-                    float v = _pixelData[rowOffset + x] / 255f;
-                    if (v < 0) v = 0;
-                    else if (v > 1) v = 1;
-
-                    v = MathF.Pow(v, 0.85f);
-                    int index = (int)(v * maxIndex);
-                    _charData[dstOffset + x] = Ramp[index];
+                    _charData[dstOffset + x] = _charLookup[_pixelData[rowOffset + x]];
                 }
             }
-            _charData.CopyTo(target.GetBackBuffer()[.._bufferArea]);
+
+            target.UpdateBackBuffer(_charData);
         }
 
         private void EnsureVertexCapacity(int additionalFloats)

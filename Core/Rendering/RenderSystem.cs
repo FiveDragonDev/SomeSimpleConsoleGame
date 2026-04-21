@@ -30,18 +30,42 @@ namespace SomeSimpleConsoleGame.Core.Rendering
             _renderContext = renderContext;
             _showStats = showStats;
 
-            TargetDeltaTime = 1f / targetFPS;
             _targetFps = targetFPS;
             _targetTicks = Stopwatch.Frequency / _targetFps;
             _frameTimer = Stopwatch.StartNew();
             _nextFrameTicks = Stopwatch.GetTimestamp();
         }
 
-        public void Update(double deltaTime)
+        public void Update(float deltaTime)
         {
             _renderTask?.GetAwaiter().GetResult();
 
             _renderContext.Render(_renderer);
+
+            if (!_renderer.HasPendingRedraw)
+            {
+                _nextFrameTicks += _targetTicks;
+                long now = Stopwatch.GetTimestamp();
+                long sleepTicksLocal = _nextFrameTicks - now;
+                if (sleepTicksLocal > 0)
+                {
+                    int sleepMs = (int)(sleepTicksLocal * 1000 / Stopwatch.Frequency);
+                    if (sleepMs > 1) Thread.Sleep(sleepMs - 1);
+                    while (Stopwatch.GetTimestamp() < _nextFrameTicks)
+                        Thread.SpinWait(16);
+                }
+                else _nextFrameTicks = now;
+
+                _frameCount++;
+                if (_frameTimer.Elapsed.TotalSeconds >= 1)
+                {
+                    _fps = _frameCount;
+                    _frameCount = 0;
+                    _frameTimer.Restart();
+                }
+
+                return;
+            }
 
             if (_showStats)
             {

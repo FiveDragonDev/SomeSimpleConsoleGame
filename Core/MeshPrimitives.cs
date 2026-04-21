@@ -46,7 +46,7 @@ namespace SomeSimpleConsoleGame.Core
                     new(h, -h, h),
                     new(h, h, h),
                     new(-h, h, h),
-                ],
+            ],
                 [
                     0, 1, 2, 0, 2, 3,
                     4, 6, 5, 4, 7, 6,
@@ -65,22 +65,23 @@ namespace SomeSimpleConsoleGame.Core
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(radius);
 
             int vertexCols = segments + 1;
-            var vertices = new Mesh.Vertex[(rings + 1) * vertexCols];
+            int vertexLength = (rings + 1) * vertexCols;
+            Span<Mesh.Vertex> vertices = vertexLength < 256 ? stackalloc Mesh.Vertex[vertexLength] : new Mesh.Vertex[vertexLength];
 
             int vi = 0;
             for (int i = 0; i <= rings; i++)
             {
                 float t = i / (float)rings;
                 float theta = MathF.PI * t;
-                float sinTheta = MathF.Sin(theta);
-                float cosTheta = MathF.Cos(theta);
+                float sinTheta = MathUtils.QSin(theta);
+                float cosTheta = MathUtils.QCos(theta);
 
                 for (int j = 0; j <= segments; j++)
                 {
                     float s = j / (float)segments;
-                    float phi = MathF.Tau * s;
-                    float sinPhi = MathF.Sin(phi);
-                    float cosPhi = MathF.Cos(phi);
+                    float phi = MathUtils.DoublePi * s;
+                    float sinPhi = MathUtils.QSin(phi);
+                    float cosPhi = MathUtils.QCos(phi);
 
                     float x = radius * sinTheta * cosPhi;
                     float y = radius * cosTheta;
@@ -89,7 +90,8 @@ namespace SomeSimpleConsoleGame.Core
                 }
             }
 
-            var triangles = new int[rings * segments * 6];
+            int trianglesLength = segments * segments * 6;
+            Span<int> triangles = trianglesLength < 256 ? stackalloc int[trianglesLength] : new int[trianglesLength];
             int ti = 0;
             for (int i = 0; i < rings; i++)
             {
@@ -123,7 +125,8 @@ namespace SomeSimpleConsoleGame.Core
             ArgumentOutOfRangeException.ThrowIfNegativeOrZero(tubeRadius);
 
             int vertexCols = sides + 1;
-            var vertices = new Mesh.Vertex[(segments + 1) * vertexCols];
+            int vertexLength = (segments + 1) * vertexCols;
+            Span<Mesh.Vertex> vertices = vertexLength < 256 ? stackalloc Mesh.Vertex[vertexLength] : new Mesh.Vertex[vertexLength];
 
             int vi = 0;
             for (int i = 0; i <= segments; i++)
@@ -148,7 +151,8 @@ namespace SomeSimpleConsoleGame.Core
                 }
             }
 
-            var triangles = new int[segments * sides * 6];
+            int trianglesLength = segments * sides * 6;
+            Span<int> triangles = trianglesLength < 256 ? stackalloc int[trianglesLength] : new int[trianglesLength];
             int ti = 0;
             for (int i = 0; i < segments; i++)
             {

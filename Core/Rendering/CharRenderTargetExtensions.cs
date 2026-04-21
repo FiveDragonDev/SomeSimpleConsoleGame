@@ -16,11 +16,11 @@ namespace SomeSimpleConsoleGame.Core.Rendering
             return true;
         }
 
-        public static Span<char> GetRowSpan(this ICharRenderTarget target, int y)
+        public static void GetRowSpan(this ICharRenderTarget target, int y, Span<char> destination)
         {
-            if (y < 0 || y >= target.Height) return [];
+            if (y < 0 || y >= target.Height) return;
             int start = y * target.Width;
-            return target.GetBackBuffer().Slice(start, target.Width);
+            target.GetBackBuffer().Slice(start, target.Width).CopyTo(destination);
         }
 
         public static Span<char> GetRowSpan(this ICharRenderTarget target, int x, int y, int length)

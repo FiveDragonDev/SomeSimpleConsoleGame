@@ -2,7 +2,7 @@
   "profiles": {
     "SomeSimpleConsoleGame": {
       "commandName": "Project",
-      "commandLineArgs": "--w 240 --h 120"
+      "commandLineArgs": "--w 180 --h 90"
     }
   }
 }

@@ -22,7 +22,7 @@ namespace SomeSimpleConsoleGame.Core.Physics
 
         public GravityForce(Vector3 acceleration) => Acceleration = acceleration;
 
-        public Vector3 GetForce(PhysicsBody body) => body.Mass * Acceleration;
+        public Vector3 GetForce(PhysicsBody body) => body.IsStatic ? Vector3.Zero : body.Mass * Acceleration;
     }
 
     public readonly struct DragForce : IForce
@@ -32,8 +32,8 @@ namespace SomeSimpleConsoleGame.Core.Physics
 
         public DragForce(float linearCoefficient, float quadraticCoefficient)
         {
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(linearCoefficient);
-            ArgumentOutOfRangeException.ThrowIfNegativeOrZero(quadraticCoefficient);
+            ArgumentOutOfRangeException.ThrowIfNegative(linearCoefficient);
+            ArgumentOutOfRangeException.ThrowIfNegative(quadraticCoefficient);
 
             LinearCoefficient = linearCoefficient;
             QuadraticCoefficient = quadraticCoefficient;
@@ -41,11 +41,16 @@ namespace SomeSimpleConsoleGame.Core.Physics
 
         public Vector3 GetForce(PhysicsBody body)
         {
-            Vector3 velocity = body.KinematicParameters.Velocity;
+            if (body.IsStatic) return Vector3.Zero;
+            Vector3 velocity = body.KinematicParameters.LinearVelocity;
             float speedSq = velocity.LengthSquared();
             if (speedSq == 0) return Vector3.Zero;
 
-            return -velocity * (LinearCoefficient + QuadraticCoefficient * MathUtils.QSqrt(speedSq));
+            float factor = LinearCoefficient;
+            if (QuadraticCoefficient != 0)
+                factor += QuadraticCoefficient * MathF.Sqrt(speedSq);
+
+            return -velocity * factor;
         }
     }
 }
